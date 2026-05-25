@@ -1,0 +1,45 @@
+{
+  "name": "devrel-research-agent",
+  "version": "0.1.0",
+  "description": "Multi-agent competitive intel system for DevRel work — built on Claude Agent SDK. Given a project name, produces a structured report covering tech, adoption, sentiment, hackathon presence, and DevRel angles.",
+  "type": "module",
+  "bin": {
+    "devrel-research": "./bin/devrel-research.ts"
+  },
+  "scripts": {
+    "dev": "tsx bin/devrel-research.ts",
+    "build": "tsc",
+    "start": "node dist/bin/devrel-research.js",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "claude",
+    "agent-sdk",
+    "devrel",
+    "multi-agent",
+    "competitive-intel",
+    "arkiv"
+  ],
+  "author": "Santiago Trujillo <santiagotrujillozuluaga@gmail.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@anthropic-ai/sdk": "latest",
+    "@octokit/rest": "^21.0.2",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "ora": "^8.1.0",
+    "picocolors": "^1.1.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+
+# Generated reports — keep only the curated samples in reports/samples/
+reports/*
+!reports/samples/
+!reports/.gitkeep
