@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { loadPrompt, extractJson } from "./utils.js";
 import {
   ArkivAnalysisSchema,
@@ -6,53 +6,56 @@ import {
   type ResearchReport,
 } from "./schemas.js";
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
 /**
- * Takes a research report and produces an Arkiv-specific competitive analysis.
+ * Arkiv DevRel expert layer.
  *
- * Uses prompt caching on the large Arkiv positioning playbook so subsequent
- * reports in the same hour share the cached prefix (savings: ~75% on cached tokens).
+ * Runs as a SEPARATE query() call (not a sub-agent of the orchestrator) so:
+ *   1. Its large system prompt (the Arkiv positioning playbook) hits the
+ *      Agent SDK's prompt cache independently — shared across every report.
+ *   2. We can iterate the Arkiv prompt without disturbing the research pipeline.
+ *   3. Auth path is unified: same Claude Agent SDK as the orchestrator
+ *      (uses ANTHROPIC_API_KEY or your `claude login` OAuth session).
+ *
+ * Takes a research report → produces an Arkiv-specific competitive analysis.
  */
 export async function runArkivExpert(report: ResearchReport): Promise<ArkivAnalysis> {
   const systemPrompt = loadPrompt("arkiv-expert");
 
-  const msg = await client.messages.create({
-    model: process.env.DEVREL_RESEARCH_SYNTH_MODEL ?? "claude-opus-4-7",
-    max_tokens: 4096,
-    system: [
-      {
-        type: "text",
-        text: systemPrompt,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              `Research report (JSON) about **${report.project_name}**:\n\n` +
-              "```json\n" +
-              JSON.stringify(report, null, 2) +
-              "\n```\n\n" +
-              `Produce ONE JSON object matching ArkivAnalysisSchema. Output JSON only.`,
-          },
-        ],
-      },
-    ],
+  const userPrompt =
+    `Research report (JSON) about **${report.project_name}**:\n\n` +
+    "```json\n" +
+    JSON.stringify(report, null, 2) +
+    "\n```\n\n" +
+    `Produce ONE JSON object matching ArkivAnalysisSchema. Output JSON only — ` +
+    `no prose, no markdown wrapper, no fences.`;
+
+  const q = query({
+    prompt: userPrompt,
+    options: {
+      model: process.env.DEVREL_RESEARCH_SYNTH_MODEL ?? "opus",
+      systemPrompt,
+      maxTurns: 1,
+      allowedTools: [], // pure analysis, no tools needed
+      permissionMode: "bypassPermissions",
+    },
   });
 
-  const text = msg.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
+  let finalText = "";
+  for await (const msg of q) {
+    if (msg.type === "assistant" && msg.message) {
+      for (const block of msg.message.content) {
+        if (block.type === "text" && "text" in block) {
+          finalText = block.text;
+        }
+      }
+    }
+  }
 
-  const raw = extractJson(text);
+  if (!finalText) {
+    throw new Error("Arkiv expert produced no output. Check auth (API key or `claude login`).");
+  }
+
+  const raw = extractJson(finalText);
   const parsed = ArkivAnalysisSchema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues
@@ -61,7 +64,7 @@ export async function runArkivExpert(report: ResearchReport): Promise<ArkivAnaly
       .join("\n");
     throw new Error(
       `Arkiv expert output failed schema validation:\n${issues}\n\n` +
-        `Raw output (first 1200 chars):\n${text.slice(0, 1200)}`,
+        `Raw output (first 1200 chars):\n${finalText.slice(0, 1200)}`,
     );
   }
   return parsed.data;

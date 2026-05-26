@@ -7,6 +7,7 @@ import { hackathonAgent } from "./agents/hackathon.js";
 import { githubMcpServer } from "./mcp/github-tools.js";
 import { loadPrompt, extractJson, nowIso } from "./utils.js";
 import { ResearchReportSchema, type ResearchReport } from "./schemas.js";
+import { RESEARCH_REPORT_SHAPE } from "./schema-compact.js";
 
 export interface OrchestratorResult {
   report: ResearchReport;
@@ -20,27 +21,44 @@ export interface OrchestratorResult {
  *   2. Synthesizer (final assistant message) emits the merged JSON
  *   3. We parse + validate against ResearchReportSchema
  *
+ * Cost optimization: the schema lives in the SYSTEM prompt (along with the
+ * lead orchestrator prompt + synth guidance). System prompts are auto-cached
+ * by the Agent SDK once they cross ~1024 tokens, so subsequent reports in the
+ * same hour reuse the cache (~90% cost reduction on input tokens).
+ *
  * Throws if the final output fails Zod validation (caller can retry).
  */
 export async function runResearchPipeline(projectName: string): Promise<OrchestratorResult> {
-  const leadPrompt = loadPrompt("lead");
-  const synthHint = loadPrompt("synthesizer");
+  const systemPrompt = [
+    loadPrompt("lead"),
+    "",
+    "---",
+    "",
+    "## Output schema (use these EXACT field names in the final synthesis)",
+    "",
+    RESEARCH_REPORT_SHAPE,
+    "",
+    "---",
+    "",
+    "## Synthesizer guidance",
+    "",
+    loadPrompt("synthesizer"),
+  ].join("\n");
 
   const userPrompt =
     `Project to research: **${projectName}**\n\n` +
     `Today's date: ${nowIso().slice(0, 10)}.\n\n` +
-    `Spawn all 5 sub-agents in parallel now. When they return, synthesize their outputs into ` +
-    `ONE JSON object matching ResearchReportSchema (snapshot, architecture, adoption, sentiment, ` +
-    `use_cases, hackathon, devex). Add project_name="${projectName}" and generated_at="${nowIso()}". ` +
-    `Output ONLY the JSON object as your final message — no prose, no code fences.\n\n` +
-    `Synthesizer guidance:\n${synthHint}`;
+    `Spawn all 5 sub-agents in parallel now via the Task tool. When all return, ` +
+    `synthesize their outputs into ONE JSON object matching the ResearchReport shape ` +
+    `from the system prompt. Set project_name="${projectName}" and generated_at="${nowIso()}". ` +
+    `Output ONLY the JSON object as your final assistant message — no prose, no code fences.`;
 
   const q = query({
     prompt: userPrompt,
     options: {
       model: process.env.DEVREL_RESEARCH_LEAD_MODEL ?? "sonnet",
-      systemPrompt: leadPrompt,
-      maxTurns: 60,
+      systemPrompt,
+      maxTurns: 30,
       allowedTools: ["Task"],
       agents: {
         search: searchAgent,
@@ -52,8 +70,6 @@ export async function runResearchPipeline(projectName: string): Promise<Orchestr
       mcpServers: {
         github: githubMcpServer,
       },
-      // permissionMode default ("ask") is wrong for headless CLI;
-      // we trust our own tools so we bypass prompts.
       permissionMode: "bypassPermissions",
     },
   });
@@ -66,7 +82,7 @@ export async function runResearchPipeline(projectName: string): Promise<Orchestr
     if (msg.type === "assistant" && msg.message) {
       for (const block of msg.message.content) {
         if (block.type === "text" && "text" in block) {
-          finalText = block.text; // keep last assistant text — the synth output
+          finalText = block.text;
         }
       }
     }
@@ -77,7 +93,7 @@ export async function runResearchPipeline(projectName: string): Promise<Orchestr
   }
 
   if (!finalText) {
-    throw new Error("Orchestrator produced no assistant text. Check API key + connectivity.");
+    throw new Error("Orchestrator produced no assistant text. Check auth (API key or `claude login`).");
   }
 
   const raw = extractJson(finalText);
