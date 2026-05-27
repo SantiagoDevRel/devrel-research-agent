@@ -96,17 +96,63 @@ export async function runResearchPipeline(projectName: string): Promise<Orchestr
     throw new Error("Orchestrator produced no assistant text. Check auth (API key or `claude login`).");
   }
 
-  const raw = extractJson(finalText);
-  const parsed = ResearchReportSchema.safeParse(raw);
+  // First validation attempt
+  let parsed = ResearchReportSchema.safeParse(extractJson(finalText));
+
+  // If validation fails, ask the synth to fix ONLY the specific errors.
+  // This is much cheaper than re-running the entire research pipeline (~$0.05 vs ~$2).
   if (!parsed.success) {
     const issues = parsed.error.issues
-      .slice(0, 5)
+      .slice(0, 15)
       .map((i) => `  • ${i.path.join(".")}: ${i.message}`)
       .join("\n");
-    throw new Error(
-      `Synthesizer output failed schema validation:\n${issues}\n\n` +
-        `Raw output (first 1200 chars):\n${finalText.slice(0, 1200)}`,
-    );
+
+    const fixPrompt =
+      `Your previous JSON output failed schema validation with these errors:\n\n` +
+      issues +
+      `\n\nHere is your previous output:\n\n` +
+      "```json\n" +
+      finalText.slice(0, 8000) +
+      "\n```\n\n" +
+      `Produce a CORRECTED JSON object that fixes ONLY those errors. ` +
+      `Preserve all other content. Output ONLY the JSON, no prose, no fences.`;
+
+    const fix = query({
+      prompt: fixPrompt,
+      options: {
+        model: process.env.DEVREL_RESEARCH_LEAD_MODEL ?? "sonnet",
+        systemPrompt,
+        maxTurns: 1,
+        allowedTools: [],
+        permissionMode: "bypassPermissions",
+      },
+    });
+
+    let fixedText = "";
+    for await (const msg of fix) {
+      if (msg.type === "assistant" && msg.message) {
+        for (const block of msg.message.content) {
+          if (block.type === "text" && "text" in block) fixedText = block.text;
+        }
+      }
+      if (msg.type === "result" && msg.subtype === "success") {
+        cost_usd += (msg as any).total_cost_usd ?? 0;
+        duration_ms += (msg as any).duration_ms ?? 0;
+      }
+    }
+
+    parsed = ResearchReportSchema.safeParse(extractJson(fixedText));
+    if (!parsed.success) {
+      const fixIssues = parsed.error.issues
+        .slice(0, 5)
+        .map((i) => `  • ${i.path.join(".")}: ${i.message}`)
+        .join("\n");
+      throw new Error(
+        `Synthesizer output failed validation even after retry:\n${fixIssues}\n\n` +
+          `Original errors:\n${issues}\n\n` +
+          `Retry output (first 800 chars):\n${fixedText.slice(0, 800)}`,
+      );
+    }
   }
 
   return { report: parsed.data, cost_usd, duration_ms };

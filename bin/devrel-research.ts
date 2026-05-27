@@ -21,12 +21,20 @@ program
     "--from-json <path>",
     "Skip research, load an existing report JSON, and only run the Arkiv layer (cheap iteration)",
   )
+  .option(
+    "--use-oauth",
+    "Ignore ANTHROPIC_API_KEY and use your `claude login` OAuth session (Pro/Max subscription)",
+    false,
+  )
   .action(
     async (
       project: string,
-      opts: { out: string; skipArkiv: boolean; fromJson?: string },
+      opts: { out: string; skipArkiv: boolean; fromJson?: string; useOauth: boolean },
     ) => {
-      if (!process.env.ANTHROPIC_API_KEY) {
+      if (opts.useOauth) {
+        delete process.env.ANTHROPIC_API_KEY;
+        console.log(pc.dim("Using `claude login` OAuth session (--use-oauth).\n"));
+      } else if (!process.env.ANTHROPIC_API_KEY) {
         console.log(
           pc.dim("No ANTHROPIC_API_KEY set — relying on your `claude login` session.\n"),
         );

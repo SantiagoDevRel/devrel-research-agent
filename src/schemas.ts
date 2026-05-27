@@ -9,8 +9,8 @@ const sectionStatus = z.enum(["ok", "partial", "not_found", "error"]);
 
 const sectionMeta = z.object({
   status: sectionStatus,
-  notes: z.string().optional().describe("Reasoning, warnings, or what was missing."),
-  sources: z.array(z.string().url()).default([]),
+  notes: z.string().nullish().describe("Reasoning, warnings, or what was missing."),
+  sources: z.array(z.string().url()).default([]).catch([]),
 });
 
 // ─── Section 1: Snapshot (Search agent) ────────────────────────────────────────
@@ -85,7 +85,7 @@ export const SentimentSchema = sectionMeta.extend({
       z.object({
         complaint: z.string(),
         source: z.string(),
-        url: z.string().url().optional(),
+        url: z.string().url().nullish(),
       }),
     )
     .default([]),
@@ -94,7 +94,7 @@ export const SentimentSchema = sectionMeta.extend({
       z.object({
         praise: z.string(),
         source: z.string(),
-        url: z.string().url().optional(),
+        url: z.string().url().nullish(),
       }),
     )
     .default([]),
@@ -107,7 +107,7 @@ export const UseCasesSchema = sectionMeta.extend({
       z.object({
         name: z.string(),
         description: z.string(),
-        url: z.string().url().optional(),
+        url: z.string().url().nullish(),
         evidence: z.enum(["case_study", "blog", "tweet", "showcase", "other"]),
       }),
     )
@@ -128,7 +128,7 @@ export const HackathonSchema = sectionMeta.extend({
             z.object({
               name: z.string(),
               description: z.string(),
-              url: z.string().url().optional(),
+              url: z.string().url().nullish(),
             }),
           )
           .default([]),
